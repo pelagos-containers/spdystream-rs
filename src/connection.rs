@@ -418,6 +418,14 @@ impl Connection {
                     }
                 }
 
+                // Close all open streams so that any read_data() waiters
+                // unblock with Ok(None) rather than hanging indefinitely.
+                {
+                    let streams = conn2.streams.lock().await;
+                    for stream in streams.values() {
+                        stream.close_remote();
+                    }
+                }
                 let _ = conn2.close_tx.send(true);
             });
         }
