@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["DATA_FLAG_FIN","FLAG_FIN","FLAG_UNIDIRECTIONAL"],"enum":["Frame","GoAwayStatus","RstStatus"],"struct":["DataFrame","GoAwayFrame","HeadersFrame","PingFrame","RstStreamFrame","Setting","SettingsFrame","SynReplyFrame","SynStreamFrame","WindowUpdateFrame"]};
