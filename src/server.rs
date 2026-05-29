@@ -103,7 +103,7 @@ fn parse_http_request(text: &str) -> Result<UpgradeRequest> {
             .map_err(|_| Error::Protocol(format!("invalid header name: {name}")))?;
         let header_value = http::header::HeaderValue::from_str(value)
             .map_err(|_| Error::Protocol(format!("invalid header value: {value}")))?;
-        headers.insert(header_name, header_value);
+        headers.append(header_name, header_value);
     }
 
     if !has_spdy_upgrade {
