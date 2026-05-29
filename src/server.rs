@@ -121,11 +121,27 @@ fn parse_http_request(text: &str) -> Result<UpgradeRequest> {
 
 /// Send 101 Switching Protocols response to any async writer.
 pub async fn send_upgrade_response<S: AsyncWrite + Unpin>(stream: &mut S) -> Result<()> {
-    stream
-        .write_all(
-            b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: spdy/3.1\r\n\r\n",
-        )
-        .await?;
+    send_upgrade_response_with_protocol(stream, None).await
+}
+
+/// Like `send_upgrade_response` but also echoes `X-Stream-Protocol-Version` when provided.
+/// kubectl requires the server to confirm the negotiated subprotocol:
+///   - exec/attach: "v4.channel.k8s.io" enables exit-code propagation via the error stream
+///   - port-forward: "portforward.k8s.io/v1" or the upgrade is rejected by the client
+pub async fn send_upgrade_response_with_protocol<S: AsyncWrite + Unpin>(
+    stream: &mut S,
+    protocol: Option<&str>,
+) -> Result<()> {
+    let response = match protocol {
+        None => {
+            "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: spdy/3.1\r\n\r\n"
+                .to_string()
+        }
+        Some(p) => format!(
+            "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: spdy/3.1\r\nX-Stream-Protocol-Version: {p}\r\n\r\n"
+        ),
+    };
+    stream.write_all(response.as_bytes()).await?;
     Ok(())
 }
 
@@ -175,6 +191,62 @@ mod tests {
             }
         }
         assert!(resp.starts_with(b"HTTP/1.1 101"));
+    }
+
+    #[tokio::test]
+    async fn test_upgrade_response_with_protocol() {
+        let (mut client, mut server) = tokio::io::duplex(4096);
+
+        // Without protocol: no X-Stream-Protocol-Version header.
+        send_upgrade_response_with_protocol(&mut server, None)
+            .await
+            .unwrap();
+        let mut resp = Vec::new();
+        loop {
+            let b = client.read_u8().await.unwrap();
+            resp.push(b);
+            if resp.ends_with(b"\r\n\r\n") {
+                break;
+            }
+        }
+        let text = std::str::from_utf8(&resp).unwrap();
+        assert!(text.starts_with("HTTP/1.1 101"));
+        assert!(!text.contains("X-Stream-Protocol-Version"));
+
+        let (mut client2, mut server2) = tokio::io::duplex(4096);
+
+        // With exec protocol: X-Stream-Protocol-Version is included.
+        send_upgrade_response_with_protocol(&mut server2, Some("v4.channel.k8s.io"))
+            .await
+            .unwrap();
+        let mut resp2 = Vec::new();
+        loop {
+            let b = client2.read_u8().await.unwrap();
+            resp2.push(b);
+            if resp2.ends_with(b"\r\n\r\n") {
+                break;
+            }
+        }
+        let text2 = std::str::from_utf8(&resp2).unwrap();
+        assert!(text2.starts_with("HTTP/1.1 101"));
+        assert!(text2.contains("X-Stream-Protocol-Version: v4.channel.k8s.io"));
+
+        let (mut client3, mut server3) = tokio::io::duplex(4096);
+
+        // With port-forward protocol.
+        send_upgrade_response_with_protocol(&mut server3, Some("portforward.k8s.io/v1"))
+            .await
+            .unwrap();
+        let mut resp3 = Vec::new();
+        loop {
+            let b = client3.read_u8().await.unwrap();
+            resp3.push(b);
+            if resp3.ends_with(b"\r\n\r\n") {
+                break;
+            }
+        }
+        let text3 = std::str::from_utf8(&resp3).unwrap();
+        assert!(text3.contains("X-Stream-Protocol-Version: portforward.k8s.io/v1"));
     }
 
     #[tokio::test]
